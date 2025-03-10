@@ -128,3 +128,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 checkpoints/
+.vscode/
+mast3r_gradio_demo/
+dust3r_gradio_demo/
