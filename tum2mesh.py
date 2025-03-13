@@ -262,6 +262,9 @@ def main(tum_dataset_path, output_file='tum_mesh.ply'):
     global_colors = []
 
     for i, assoc in enumerate(colors):
+        print(f"Processing image {i} of {len(colors)}")
+        if i % 30 != 0:
+            continue
         # 加载RGB和深度图像
         rgb = cv2.imread(colors[i])
         depth = cv2.imread(depths[i], cv2.IMREAD_UNCHANGED)
