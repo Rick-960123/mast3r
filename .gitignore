@@ -129,5 +129,5 @@ dmypy.json
 .pyre/
 checkpoints/
 .vscode/
-mast3r_gradio_demo/
 dust3r_gradio_demo/
+mast3r_gradio_demo/
