@@ -38,16 +38,9 @@ def convert_glb_pointcloud_to_ply(input_file, output_file=None):
         return False
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    if len(args) < 1:
-        print("用法: python glb2ply.py <input_glb_file> [output_ply_file]")
-        sys.exit(1)
-    
-    input_file = args[0]
-    output_file = args[1] if len(args) > 1 else None
-    
-    if not os.path.exists(input_file):
-        print(f"错误: 输入文件 {input_file} 不存在")
-        sys.exit(1)
+    input_file = '/home/rick/Downloads/tmplomebidj_scene.glb'
+
+    if len(sys.argv) > 1:
+        input_file = sys.argv[1]
     
     convert_glb_pointcloud_to_ply(input_file, output_file)

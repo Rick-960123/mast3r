@@ -8,6 +8,7 @@ import sys
 import cv2
 import open3d as o3d
 from tumDatasets import TUMDataset
+from skimage import measure
 
 OPENGL = np.array([[1, 0, 0, 0],
                    [0, -1, 0, 0],
@@ -52,6 +53,24 @@ def pts3d_to_trimesh(img, pts3d, valid=None):
 
     assert len(faces) == len(face_colors)
     return dict(vertices=vertices, face_colors=face_colors, faces=faces)
+
+def pcd_to_voxel_grid(pcd, voxel_size=1.0):
+    points = np.asarray(pcd.points)
+    min_bound = np.min(points, axis=0)
+    max_bound = np.max(points, axis=0)
+    dims = np.ceil((max_bound - min_bound) / voxel_size).astype(np.int32)
+    voxel_grid = np.zeros(dims, dtype=np.uint8)
+    for point in points:
+        indices = np.floor((point - min_bound) / voxel_size).astype(np.int32)
+        voxel_grid[tuple(indices)] = 1
+    return voxel_grid,voxel_size,min_bound
+
+def pts3d_to_trimesh_by_cude(pcd):
+    voxel_grid,voxel_size,point = pcd_to_voxel_grid(pcd, voxel_size=0.05)
+
+    # Perform surface reconstruction using marching cubes
+    vertices, faces, normals, values = measure.marching_cubes(voxel_grid, level=0.5,spacing=(voxel_size,voxel_size,voxel_size))
+    return dict(vertices=vertices, face_colors=None, faces=faces)
 
 def geotrf(Trf, pts, ncol=None, norm=False):
     """ Apply a geometric transformation to a list of 3-D points.
@@ -338,8 +357,9 @@ def transform_points_open3d(points, transform_matrix):
 # 修改main函数以处理没有associations.txt的情况
 def main(tum_dataset_path, output_file='tum_mesh.ply'):
     # 相机内参（根据TUM数据集调整）
-    fx, fy = 535.4, 539.2  # 焦距
-    cx, cy = 320.1, 247.6  # 主点
+    factor = 5000.0
+    fx, fy = 525.0, 525.0  # 焦距
+    cx, cy = 319.5, 239.5  # 主点
     
     # 读取轨迹文件
     trajectory_path = os.path.join(tum_dataset_path, 'groundtruth.txt')
@@ -408,9 +428,11 @@ def main(tum_dataset_path, output_file='tum_mesh.ply'):
             continue
         
         # 加载RGB和深度图像
-        rgb = load_rgb_image(rgb_path)
-        depth = load_depth_image(depth_path)
-        
+        rgb = cv2.imread(colors[i])
+        depth = cv2.imread(depths[i], cv2.IMREAD_UNCHANGED)
+        depth = depth.astype(np.float32) / 5000.0
+        T_c2w = T_poses[i]
+
         # 将深度图转换为3D点云
         pts3d, valid, pts3d_rgb = depth_to_points3d(depth, rgb, fx, fy, cx, cy)
         
@@ -447,8 +469,8 @@ def main(tum_dataset_path, output_file='tum_mesh.ply'):
         pts3d = transform_points_open3d(pts3d, T_c2w)
 
         # 创建网格
-        mesh = pts3d_to_trimesh(rgb, pts3d, valid)
-        meshes.append(mesh)
+        # mesh = pts3d_to_trimesh_by_cude(rgb, pts3d, valid)
+        # meshes.append(mesh)
         
         # 保存相机信息
         cam_colors.append([0, 255, 0])  # 绿色相机
@@ -464,7 +486,11 @@ def main(tum_dataset_path, output_file='tum_mesh.ply'):
         global_colors.append(valid_colors)
 
     # 合并所有网格
-    mesh = trimesh.Trimesh(**cat_meshes(meshes))
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.concatenate(global_points))
+    pcd.colors = o3d.utility.Vector3dVector(np.concatenate(global_colors))
+    meshes = pts3d_to_trimesh_by_cude(pcd)
+    mesh = trimesh.Trimesh(meshes['vertices'],meshes['faces'])
     scene = trimesh.Scene()
     scene.add_geometry(mesh)
     
@@ -510,5 +536,5 @@ if __name__ == '__main__':
     tum_dataset_path = "/home/rick/Datasets/TUM_RGBD/rgbd_dataset_freiburg3_long_office_household"
     if len(sys.argv) > 1:
         tum_dataset_path = sys.argv[1]
-    output_file = 'tum_mesh.glb'
+    output_file = 'tum_mesh2.glb'
     main(tum_dataset_path, os.path.join(tum_dataset_path, output_file))
