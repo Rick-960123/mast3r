@@ -221,100 +221,6 @@ def cat_meshes(meshes):
     faces = np.concatenate(faces)
     return dict(vertices=vertices, face_colors=colors, faces=faces)
 
-# 新增函数：读取TUM轨迹文件
-def read_tum_trajectory(file_path):
-    """读取TUM格式的轨迹文件"""
-    trajectory = []
-    with open(file_path, 'r') as f:
-        for line in f:
-            if line.startswith('#'):
-                continue
-            parts = line.strip().split()
-            if len(parts) != 8:
-                continue
-            
-            timestamp = float(parts[0])
-            tx, ty, tz = map(float, parts[1:4])
-            qx, qy, qz, qw = map(float, parts[4:8])
-            
-            # 创建从相机到世界的变换矩阵
-            R = Rotation.from_quat([qx, qy, qz, qw]).as_matrix()
-            t = np.array([tx, ty, tz]).reshape(3, 1)
-            
-            # 构建4x4变换矩阵
-            T = np.eye(4)
-            T[:3, :3] = R
-            T[:3, 3] = t.flatten()
-            
-            trajectory.append({
-                'timestamp': timestamp,
-                'translation': [tx, ty, tz],
-                'quaternion': [qw, qx, qy, qz],  # 注意顺序转换为[w,x,y,z]
-                'T': T  # 变换矩阵
-            })
-    return trajectory
-
-# 新增函数：读取TUM时间戳文件
-def read_tum_timestamps(file_path):
-    """读取TUM格式的时间戳文件（如rgb.txt, depth.txt）"""
-    data = []
-    with open(file_path, 'r') as f:
-        for line in f:
-            if line.startswith('#'):
-                continue
-            parts = line.strip().split()
-            if len(parts) < 2:
-                continue
-            
-            timestamp = float(parts[0])
-            filename = parts[1]
-            
-            data.append({
-                'timestamp': timestamp,
-                'filename': filename
-            })
-    return data
-
-# 新增函数：关联RGB和深度图像
-def associate_rgb_depth(rgb_data, depth_data, max_diff=0.02):
-    """根据时间戳关联RGB和深度图像"""
-    associations = []
-    
-    for rgb in rgb_data:
-        rgb_time = rgb['timestamp']
-        best_depth = None
-        best_diff = float('inf')
-        
-        for depth in depth_data:
-            depth_time = depth['timestamp']
-            diff = abs(rgb_time - depth_time)
-            
-            if diff < best_diff:
-                best_diff = diff
-                best_depth = depth
-        
-        if best_depth is not None and best_diff < max_diff:
-            associations.append({
-                'rgb_timestamp': rgb_time,
-                'rgb_file': rgb['filename'],
-                'depth_timestamp': best_depth['timestamp'],
-                'depth_file': best_depth['filename']
-            })
-    
-    return associations
-
-# 新增函数：加载RGB图像
-def load_rgb_image(file_path):
-    """加载RGB图像"""
-    img = cv2.cvtColor(cv2.imread(file_path), cv2.COLOR_BGR2RGB)
-    return img
-
-# 新增函数：加载深度图像
-def load_depth_image(file_path, scale=5000.0):
-    """加载深度图像，TUM数据集中深度值通常以毫米为单位，除以5000转换为米"""
-    depth = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-    return depth.astype(np.float32) / scale
-
 # 新增函数：将深度图转换为3D点云
 def depth_to_points3d(depth, rgb, fx, fy, cx, cy):
     """将深度图转换为3D点云"""
@@ -361,38 +267,9 @@ def main(tum_dataset_path, output_file='tum_mesh.ply'):
     fx, fy = 525.0, 525.0  # 焦距
     cx, cy = 319.5, 239.5  # 主点
     
-    # 读取轨迹文件
-    trajectory_path = os.path.join(tum_dataset_path, 'groundtruth.txt')
-    
-    if not os.path.exists(trajectory_path):
-        print(f"错误：找不到轨迹文件 {trajectory_path}")
-        return
-    
-    trajectory = read_tum_trajectory(trajectory_path)
-    
-    # 读取RGB和深度图像的时间戳文件
-    rgb_txt_path = os.path.join(tum_dataset_path, 'rgb.txt')
-    depth_txt_path = os.path.join(tum_dataset_path, 'depth.txt')
-    
-    if not os.path.exists(rgb_txt_path):
-        print(f"错误：找不到RGB时间戳文件 {rgb_txt_path}")
-        return
-    
-    if not os.path.exists(depth_txt_path):
-        print(f"错误：找不到深度时间戳文件 {depth_txt_path}")
-        return
-    
-    # 读取RGB和深度图像的时间戳
-    rgb_data = read_tum_timestamps(rgb_txt_path)
-    depth_data = read_tum_timestamps(depth_txt_path)
-    
-    # 关联RGB和深度图像
-    associations = associate_rgb_depth(rgb_data, depth_data)
-    
-    if not associations:
-        print("错误：无法关联RGB和深度图像")
-        return
-    
+    tum = TUMDataset(tum_dataset_path)
+    poses, colors, depths, T_poses = tum.load_poses()
+
     meshes = []
     cam_colors = []
     focals = []
@@ -403,30 +280,11 @@ def main(tum_dataset_path, output_file='tum_mesh.ply'):
     global_pcd = o3d.geometry.PointCloud()
     global_points = []
     global_colors = []
-    
-    # 处理每个关联的RGB和深度图像
-    max_frames = len(associations)  # 限制处理的帧数，可以根据需要调整
-    
-    last_start_time = 0
-    for i, assoc in enumerate(associations[:max_frames]):
-        rgb_path = os.path.join(tum_dataset_path, assoc['rgb_file'])
-        depth_path = os.path.join(tum_dataset_path, assoc['depth_file'])
-        start_time = assoc['rgb_timestamp']
 
-        print(f"处理帧 {i+1}/{max_frames}")
-
-        if start_time - last_start_time < 1.0:
+    for i, assoc in enumerate(colors):
+        print(f"Processing image {i} of {len(colors)}")
+        if i % 30 != 0:
             continue
-        
-        if start_time < trajectory[0]['timestamp']:
-            continue
-
-        last_start_time = start_time
-
-        if not os.path.exists(rgb_path) or not os.path.exists(depth_path):
-            print(f"警告：找不到图像文件 {rgb_path} 或 {depth_path}")
-            continue
-        
         # 加载RGB和深度图像
         rgb = cv2.imread(colors[i])
         depth = cv2.imread(depths[i], cv2.IMREAD_UNCHANGED)
@@ -435,37 +293,6 @@ def main(tum_dataset_path, output_file='tum_mesh.ply'):
 
         # 将深度图转换为3D点云
         pts3d, valid, pts3d_rgb = depth_to_points3d(depth, rgb, fx, fy, cx, cy)
-        
-        # 找到最接近的位姿
-        index = np.argmin(np.abs(np.array([p['timestamp'] for p in trajectory]) - start_time))
-        
-        closest_pose = trajectory[index]
-        if abs(closest_pose['timestamp'] - start_time) > 0.1:
-            continue
-
-        if closest_pose['timestamp'] < start_time:
-            slerp = Slerp(np.array([closest_pose['timestamp'], trajectory[index+1]['timestamp']]), 
-                          Rotation.from_quat(np.array([closest_pose['quaternion'], trajectory[index+1]['quaternion']])))
-            slerp_pose = slerp(np.array([start_time]))[0]
-            slerp_factor = (start_time - closest_pose['timestamp']) / (trajectory[index+1]['timestamp'] - closest_pose['timestamp'])
-            # 将列表转换为NumPy数组再进行运算
-            t1 = np.array(closest_pose['translation'])
-            t2 = np.array(trajectory[index+1]['translation'])
-            slerp_t = t1 + slerp_factor * (t2 - t1)
-        else:
-            slerp = Slerp(np.array([trajectory[index-1]['timestamp'], closest_pose['timestamp']]), 
-                          Rotation.from_quat(np.array([trajectory[index-1]['quaternion'], closest_pose['quaternion']])))
-            slerp_pose = slerp(np.array([start_time]))[0]
-            slerp_factor = (start_time - trajectory[index-1]['timestamp']) / (closest_pose['timestamp'] - trajectory[index-1]['timestamp'])
-            # 将列表转换为NumPy数组再进行运算
-            t1 = np.array(trajectory[index-1]['translation'])
-            t2 = np.array(closest_pose['translation'])
-            slerp_t = t1 + slerp_factor * (t2 - t1)
-        
-        T_c2w = np.eye(4)
-        T_c2w[:3, :3] = slerp_pose.as_matrix()
-        T_c2w[:3, 3] = slerp_t
-        # 将点云从相机坐标系转换到世界坐标系
         pts3d = transform_points_open3d(pts3d, T_c2w)
 
         # 创建网格

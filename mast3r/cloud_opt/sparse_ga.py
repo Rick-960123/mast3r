@@ -205,8 +205,8 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
             quats[idx].data[:] = roma.rotmat_to_unitquat(rot)
             trans_offset = med_depth * torch.cat((imsizes[idx] / base_focals[idx] * (0.5 - pps[idx]), ones[:1, 0]))
             trans[idx].data[:] = cam_center + rot @ trans_offset
-            del rot
-            assert False, 'inverse kinematic chain not yet implemented'
+            # del rot
+            # assert False, 'inverse kinematic chain not yet implemented'
 
     # intrinsics parameters
     if shared_intrinsics:
@@ -430,12 +430,12 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
     # at start, don't optimize 3d points
     for i, img in enumerate(imgs):
         trainable = not (init[img].get('freeze'))
-        pps[i].requires_grad_(False)
-        log_focals[i].requires_grad_(False)
-        quats[i].requires_grad_(trainable)
-        trans[i].requires_grad_(trainable)
-        log_sizes[i].requires_grad_(trainable)
-        core_depth[i].requires_grad_(False)
+        pps[i].requires_grad_(True)
+        log_focals[i].requires_grad_(True)
+        quats[i].requires_grad_(False)
+        trans[i].requires_grad_(False)
+        log_sizes[i].requires_grad_(True)
+        core_depth[i].requires_grad_(True)
 
     res_coarse = optimize_loop(loss_3d, lr_base=lr1, niter=niter1, pix_loss=loss1)
 
